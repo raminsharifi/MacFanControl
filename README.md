@@ -29,7 +29,8 @@ Built and tested on an Apple Silicon MacBook Pro (M3 Pro, `Mac15,7`) running mac
 
 ## Features
 
-- **Live dashboard** — per-fan RPM gauge, target, hardware min/max, and mode badge (`AUTO` / `MANUAL` / `SYSTEM`), refreshed every second
+- **Live dashboard** — per-fan RPM gauge, target, hardware min/max, and mode badge (`AUTO` / `MANUAL` / `CURVE` / `SYSTEM`), refreshed every second
+- **Temperature-response fan curves** — define piecewise-linear `(hotspot °C, fan %)` curves on the command line or interactively in the TUI, continuously evaluated every second
 - **Full thermal picture** — auto-discovers every readable temperature sensor on your machine (215 on an M3 Pro) and shows the average and the hottest one, so you can see *why* the fans are spinning
 - **RPM history sparkline** — a rolling 4-minute graph for the selected fan
 - **Linked or independent control** — adjust both fans together (default, matches how MacBook thermals are designed) or each one separately
@@ -72,11 +73,25 @@ sudo cp target/release/macfan /usr/local/bin/
 ## Usage
 
 ```
-macfan            launch the TUI (sudo required to change speeds)
-macfan --list     print fans and temperatures, then exit
-macfan --auto     restore all fans to automatic control, then exit
-macfan --help     show help
+macfan                     launch the TUI (sudo required to change speeds)
+macfan --curve [SPEC]      launch the TUI with a temperature-response fan curve
+macfan --list              print fans and temperatures, then exit
+macfan --auto              restore all fans to automatic control, then exit
+macfan --help              show help
 ```
+
+### Fan curves
+
+Pass `-c` / `--curve` with coordinate pairs mapping hotspot temperature (°C) to fan speed (% of each fan's `min`–`max` RPM range). Between points, fan speed ramps piecewise-linearly; below the lowest point and above the highest point it clamps:
+
+```sh
+sudo macfan --curve 40:30,60:60,90:100
+sudo macfan --curve "40c:30%, 60c:60%, 90c:100%"
+sudo macfan --curve "(40c, 30%) -> (60c, 60%) -> (90c, 100%)"
+sudo macfan --curve   # uses the default 40°C:30% → 60°C:60% → 90°C:100% curve
+```
+
+Inside the TUI you can also press `c` to toggle the curve on/off or `C` to edit the curve points inline.
 
 `macfan --list` works without sudo:
 
@@ -100,6 +115,10 @@ Mac15,7 · Apple M3 Pro
 | `⇧←` `⇧→` / `H` `L` | target −/+ 500 RPM |
 | `+` `-` | target +/− 100 RPM |
 | `m` | toggle manual / automatic for the selected fan |
+| `c` | toggle temperature-response fan curve mode |
+| `C` | edit the fan curve inline (`temp:pct` points, `Enter` to apply, `Esc` to cancel) |
+| mouse | on the **fan curve** plot: drag a point to move it (applied live while the curve is active), click empty space to add one, right-click a point to delete it, scroll over a point for ±1%; hover shows the point's °C, % and RPM |
+| `u` / `D` | undo the last curve edit / reset the curve to the default |
 | `a` | all fans back to automatic |
 | `f` | full blast (pin at hardware max) |
 | `space` | toggle linked mode (apply changes to all fans vs. just the selected one) |
@@ -200,6 +219,9 @@ cargo clippy         # lint-clean
 | `src/smc.rs` | IOKit FFI, 80-byte SMC protocol, typed key read/write, key enumeration |
 | `src/fan.rs` | fan discovery, mode read/write, RPM encoding (`flt`/`fpe2`), Intel fallbacks |
 | `src/control.rs` | control thread: unlock sequence, retries, re-assertion, restore guarantees |
+| `src/persist.rs` | saves the edited curve to `~/.config/macfan/curve` (owned by the invoking user under `sudo`) and reloads it on start |
+| `src/plot.rs` | maps curve coordinates to terminal cells for the plot and mouse editing |
+| `src/curve.rs` | piecewise-linear temperature-response fan curve parser and evaluator |
 | `src/temps.rs` | temperature sensor discovery and polling |
 | `src/app.rs` | TUI state and key handling |
 | `src/ui.rs` | ratatui rendering |
