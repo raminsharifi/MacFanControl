@@ -36,7 +36,7 @@ fn model_name() -> String {
 fn print_help() {
     println!("macfan — control Mac fan speed from the terminal");
     println!();
-    println!("usage: macfan [--curve [SPEC] | --list | --auto | --help]");
+    println!("usage: macfan [--curve [SPEC] | --list | --auto | --help | --version]");
     println!();
     println!("  (no args)       launch the TUI (sudo required to change speeds)");
     println!("  -c, --curve     launch with a piecewise-linear temperature fan curve");
@@ -44,6 +44,7 @@ fn print_help() {
     println!("                  or 40c:30%,60c:60%,90c:100% (default if omitted)");
     println!("  --list          print fans and temperatures, then exit");
     println!("  --auto          restore all fans to automatic control, then exit");
+    println!("  -V, --version   print version, then exit");
     println!();
     println!("TUI keys: ↑↓ select fan, ←→ ±100 RPM, shift←→ ±500, m manual/auto,");
     println!("          c toggle curve, C edit curve (or edit it on the plot with the mouse; u undo, D reset), a all auto, f full blast,");
@@ -53,6 +54,7 @@ fn print_help() {
 #[derive(Debug, PartialEq)]
 enum Action {
     Help,
+    Version,
     List,
     Auto,
     Tui(Option<curve::Curve>),
@@ -61,6 +63,9 @@ enum Action {
 fn parse_args(args: &[String]) -> Result<Action, String> {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         return Ok(Action::Help);
+    }
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        return Ok(Action::Version);
     }
     let mut list = false;
     let mut auto = false;
@@ -109,6 +114,10 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         print_help();
         return Ok(());
     }
+    if action == Action::Version {
+        println!("macfan {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
 
     let smc = smc::Smc::open()?;
     let fans = fan::discover(&smc)?;
@@ -117,7 +126,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     match action {
-        Action::Help => unreachable!(),
+        Action::Help | Action::Version => unreachable!(),
         Action::Auto => {
             if !smc::is_root() {
                 return Err(
@@ -226,6 +235,8 @@ mod tests {
             parse_args(&s(&["--curve", "40c:30%", "60c:60%", "90c:100%"])).unwrap(),
             Action::Tui(Some(curve::Curve::default()))
         );
+        assert_eq!(parse_args(&s(&["--version"])).unwrap(), Action::Version);
+        assert_eq!(parse_args(&s(&["-V"])).unwrap(), Action::Version);
         assert!(parse_args(&s(&["--list", "--auto"])).is_err());
         assert!(parse_args(&s(&["--list", "--curve"])).is_err());
         assert!(parse_args(&s(&["--bogus"])).is_err());

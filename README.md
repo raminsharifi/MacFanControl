@@ -78,6 +78,7 @@ macfan --curve [SPEC]      launch the TUI with a temperature-response fan curve
 macfan --list              print fans and temperatures, then exit
 macfan --auto              restore all fans to automatic control, then exit
 macfan --help              show help
+macfan --version           print version, then exit
 ```
 
 ### Fan curves
