@@ -24,15 +24,18 @@ Built and tested on an Apple Silicon MacBook Pro (M3 Pro, `Mac15,7`) running mac
 │ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▆███████████████████████████       │
 ╰──────────────────────────────────────────────────────────────────────────╯
  fans restore to auto on quit (q) — use Q to keep settings
- ↑↓ select   ←→ ±100   ⇧←→ ±500   m manual/auto   a all auto   f full blast   space link   q quit·restore   Q quit·keep
+ ↑↓ select   ←→ ±100   ⇧←→ ±500   m manual/auto   c curve   C edit curve   u undo curve   a all auto   f full blast   space link   q quit   Q keep
 ```
+
+> A **fan curve** plot sits between the thermals panel and the RPM history — see [Fan curves](#fan-curves). It is omitted from the sketch above.
 
 ## Features
 
 - **Live dashboard** — per-fan RPM gauge, target, hardware min/max, and mode badge (`AUTO` / `MANUAL` / `CURVE` / `SYSTEM`), refreshed every second
 - **Temperature-response fan curves** — define piecewise-linear `(hotspot °C, fan %)` curves on the command line or interactively in the TUI, continuously evaluated every second
+- **Interactive curve plot** — see the curve and where your hottest sensor sits on it, then edit it with the mouse: drag points, click to add, right-click to delete, scroll for ±1%. Changes apply live, can be undone (`u`), and are saved between runs
 - **Full thermal picture** — auto-discovers every readable temperature sensor on your machine (215 on an M3 Pro) and shows the average and the hottest one, so you can see *why* the fans are spinning
-- **RPM history sparkline** — a rolling 4-minute graph for the selected fan
+- **RPM history sparkline** — a rolling 4-minute graph for the selected fan (shown when the terminal is tall enough)
 - **Linked or independent control** — adjust both fans together (default, matches how MacBook thermals are designed) or each one separately
 - **M3/M4 thermal-manager unlock** — handles the `Ftst` diagnostic unlock that newer Apple Silicon firmware requires before it accepts manual fan control (the same sequence used by [Stats](https://github.com/exelban/stats))
 - **Sleep/wake resilient** — if macOS reclaims fan control (it does, after sleep/wake), macfan detects it within ~2 seconds and re-engages your setting
@@ -55,11 +58,23 @@ Reading fan state and temperatures never requires privileges. **Writing** fan sp
 
 ## Install
 
+### Prebuilt binary (Apple Silicon)
+
+Download `macfan-macos-arm64` from the [latest release](https://github.com/raminsharifi/MacFanControl/releases/latest), then:
+
+```sh
+chmod +x macfan-macos-arm64
+xattr -d com.apple.quarantine macfan-macos-arm64   # the binary is not notarized
+sudo ./macfan-macos-arm64
+```
+
+### From source
+
 You need a [Rust toolchain](https://rustup.rs) (1.85+, edition 2024).
 
 ```sh
-git clone https://github.com/raminsharifi/macfan.git
-cd macfan
+git clone https://github.com/raminsharifi/MacFanControl.git
+cd MacFanControl
 cargo build --release
 sudo ./target/release/macfan
 ```
@@ -92,7 +107,19 @@ sudo macfan --curve "(40c, 30%) -> (60c, 60%) -> (90c, 100%)"
 sudo macfan --curve   # uses the default 40°C:30% → 60°C:60% → 90°C:100% curve
 ```
 
-Inside the TUI you can also press `c` to toggle the curve on/off or `C` to edit the curve points inline.
+Inside the TUI you can also press `c` to toggle the curve on/off, `C` to edit the curve points as text, or edit it graphically on the **fan curve** plot:
+
+| Mouse action (on the plot) | Effect |
+|----------------------------|--------|
+| drag a point | move it (kept between its neighbours); the fans follow live if the curve is active |
+| click empty space | add a point there |
+| right-click a point | delete it (a curve keeps at least two points) |
+| scroll over a point | adjust its fan speed by ±1% |
+| hover | highlight a point and show its °C, % and the RPM it gives the selected fan |
+
+The plot marks your current hottest sensor with a ◆ on the curve. Mouse precision is one terminal cell, so use scrolling for exact percentages. Edits only drive the fans while the curve is active (`c`); otherwise they just reshape the curve.
+
+The curve is saved to `~/.config/macfan/curve` after every edit (under `sudo`, in the invoking user's home) and reloaded on the next start. `--curve` overrides the saved curve for that run. Press `u` to undo edits and `D` to reset to the default curve.
 
 `macfan --list` works without sudo:
 
@@ -118,7 +145,7 @@ Mac15,7 · Apple M3 Pro
 | `m` | toggle manual / automatic for the selected fan |
 | `c` | toggle temperature-response fan curve mode |
 | `C` | edit the fan curve inline (`temp:pct` points, `Enter` to apply, `Esc` to cancel) |
-| mouse | on the **fan curve** plot: drag a point to move it (applied live while the curve is active), click empty space to add one, right-click a point to delete it, scroll over a point for ±1%; hover shows the point's °C, % and RPM |
+| mouse | edit the curve on the plot — see [Fan curves](#fan-curves) |
 | `u` / `D` | undo the last curve edit / reset the curve to the default |
 | `a` | all fans back to automatic |
 | `f` | full blast (pin at hardware max) |
@@ -168,7 +195,7 @@ main thread                      control thread
 │ ratatui UI loop     │ ────────│ owns its own SMC connection  │
 │ read-only SMC conn  │ ← Note  │ unlock / retry / clamp       │
 │ 1 Hz refresh        │ ────────│ re-assert after sleep/wake   │
-│ key handling        │         │ restore-to-auto on Drop      │
+│ key + mouse input   │         │ restore-to-auto on Drop      │
 └─────────────────────┘         └──────────────────────────────┘
 ```
 
@@ -205,13 +232,15 @@ or just reboot — the SMC resets fan control on its own at startup.
 
 **Settings revert after sleep** — expected; firmware resets the unlock on wake. macfan re-engages your target automatically within a couple of seconds while it's running.
 
+**Mouse doesn't work on the curve plot** — your terminal must support mouse reporting (Terminal.app, iTerm2, Ghostty, Kitty and Alacritty do; some multiplexer configs don't). Keyboard editing with `C` always works.
+
 **My Mac isn't in the compatibility table** — `macfan --list` is always safe to try (it's read-only). If it shows your fans correctly, control will likely work too. Issues and reports from other models are very welcome.
 
 ## Development
 
 ```sh
 cargo build          # debug build
-cargo test           # unit tests (struct layout, fourcc, fpe2/flt codecs)
+cargo test           # unit tests (struct layout, fourcc, fpe2/flt codecs, curve parsing/editing, plot geometry)
 cargo clippy         # lint-clean
 ```
 
@@ -224,8 +253,8 @@ cargo clippy         # lint-clean
 | `src/plot.rs` | maps curve coordinates to terminal cells for the plot and mouse editing |
 | `src/curve.rs` | piecewise-linear temperature-response fan curve parser and evaluator |
 | `src/temps.rs` | temperature sensor discovery and polling |
-| `src/app.rs` | TUI state and key handling |
-| `src/ui.rs` | ratatui rendering |
+| `src/app.rs` | TUI state, key and mouse handling, curve undo |
+| `src/ui.rs` | ratatui rendering, including the curve plot |
 
 The SMC struct layout is locked by a compile-time size assertion and the byte codecs are unit-tested; everything hardware-facing was verified against a live probe of the SMC on real M3 hardware.
 
