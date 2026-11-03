@@ -491,7 +491,7 @@ impl App {
     }
 
     fn apply_curve(&mut self) {
-        let Some((_, hotspot)) = self.temps.hottest else {
+        let Some((_, hotspot)) = self.temps.hottest() else {
             self.status = Some(Status {
                 error: true,
                 text: "no readable temperature sensors for fan curve".into(),
@@ -500,7 +500,7 @@ impl App {
             return;
         };
         for i in 0..self.fans.len() {
-            let rpm = self.curve.rpm_for(&self.fans[i], hotspot).round();
+            let rpm = self.curve.rpm_for(&self.fans[i], *hotspot).round();
             let same_desired = self.desired[i].is_some_and(|d| (d - rpm).abs() < 1.0);
             let hw_matches =
                 self.fans[i].mode == FanMode::Manual && (self.fans[i].target - rpm).abs() < 1.0;

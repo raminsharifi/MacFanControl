@@ -1,9 +1,9 @@
+use std::collections::HashMap;
+
 use crate::smc::Smc;
 
 pub struct Temps {
-    keys: Vec<String>,
-    pub avg: f32,
-    pub hottest: Option<(String, f32)>,
+    temps: HashMap<String, f32>,
 }
 
 fn plausible(t: f32) -> bool {
@@ -12,7 +12,7 @@ fn plausible(t: f32) -> bool {
 
 impl Temps {
     pub fn discover(smc: &Smc) -> Temps {
-        let mut keys = Vec::new();
+        let mut temps: HashMap<String, f32> = Default::default();
         if let Ok(count) = smc.key_count() {
             for i in 0..count {
                 let Ok(k) = smc.key_at(i) else { continue };
@@ -20,44 +20,40 @@ impl Temps {
                     continue;
                 }
                 let Ok(v) = smc.read(&k) else { continue };
-                if matches!(v.type_str().as_str(), "flt " | "sp78")
-                    && v.as_f32().is_some_and(plausible)
-                {
-                    keys.push(k);
+                if matches!(v.type_str().as_str(), "flt " | "sp78") {
+                    if let Some(v) = v.as_f32() {
+                        if plausible(v) {
+                            temps.insert(k, v);
+                        }
+                    }
                 }
             }
         }
-        let mut temps = Temps {
-            keys,
-            avg: 0.0,
-            hottest: None,
-        };
-        temps.refresh(smc);
-        temps
+        Temps { temps }
+    }
+
+    pub fn avg(&self) -> f32 {
+        let sum: f32 = self.temps.values().copied().sum();
+        sum / self.temps.len() as f32
+    }
+
+    pub fn hottest(&self) -> Option<(&String, &f32)> {
+        self.temps.iter().max_by(|a, b| a.1.total_cmp(b.1))
     }
 
     pub fn sensor_count(&self) -> usize {
-        self.keys.len()
+        self.temps.len()
     }
 
     pub fn refresh(&mut self, smc: &Smc) {
-        let mut sum = 0.0f32;
-        let mut n = 0usize;
-        let mut hottest: Option<(String, f32)> = None;
-        for k in &self.keys {
+        for (k, v) in self.temps.iter_mut() {
             let Some(t) = smc.read(k).ok().and_then(|v| v.as_f32()) else {
                 continue;
             };
             if !plausible(t) {
                 continue;
             }
-            sum += t;
-            n += 1;
-            if hottest.as_ref().is_none_or(|(_, h)| t > *h) {
-                hottest = Some((k.clone(), t));
-            }
+            *v = t;
         }
-        self.avg = if n > 0 { sum / n as f32 } else { 0.0 };
-        self.hottest = hottest;
     }
 }

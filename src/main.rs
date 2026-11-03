@@ -158,10 +158,10 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             println!();
-            match &temps.hottest {
+            match temps.hottest() {
                 Some((key, t)) => println!(
                     "  temps: avg {:.1}°C, hottest {t:.1}°C ({key}), {} sensors",
-                    temps.avg,
+                    temps.avg(),
                     temps.sensor_count(),
                 ),
                 None => println!("  temps: no readable sensors"),
