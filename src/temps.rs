@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::smc::Smc;
 
 pub struct Temps {
-    temps: HashMap<String, f32>,
+    pub temps: HashMap<String, f32>,
 }
 
 fn plausible(t: f32) -> bool {
