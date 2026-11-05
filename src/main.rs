@@ -3,7 +3,12 @@ use std::process::ExitCode;
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 
-use macfan::{app, control, curve, fan, smc, temps};
+mod app;
+mod persist;
+mod plot;
+mod ui;
+
+use macfan::{control, curve, fan, smc, temps};
 
 fn model_name() -> String {
     let chip = std::process::Command::new("sysctl")
