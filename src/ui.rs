@@ -228,18 +228,20 @@ fn draw_temps(frame: &mut Frame, area: Rect, app: &App) {
         Layout::vertical([Constraint::Length(1)]).split(inner)
     };
 
-    let temp_line = match &app.temps.hottest {
+    let avg_value_span = || {
+        let avg = app.temps.avg();
+        Span::styled(
+            format!("{:.1}°C", avg),
+            Style::new().fg(temp_color(avg)).bold(),
+        )
+    };
+
+    let temp_line = match app.temps.hottest() {
         Some((key, t)) => Line::from(vec![
             Span::styled("avg ", Style::new().fg(DIM)),
-            Span::styled(
-                format!("{:.1}°C", app.temps.avg),
-                Style::new().fg(temp_color(app.temps.avg)).bold(),
-            ),
+            avg_value_span(),
             Span::styled("   hottest ", Style::new().fg(DIM)),
-            Span::styled(
-                format!("{t:.1}°C"),
-                Style::new().fg(temp_color(*t)).bold(),
-            ),
+            Span::styled(format!("{t:.1}°C"), Style::new().fg(temp_color(*t)).bold()),
             Span::styled(format!(" ({key})"), Style::new().fg(DIM)),
             Span::styled(
                 format!("   {} sensors", app.temps.sensor_count()),
@@ -269,7 +271,7 @@ fn draw_temps(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled("curve ", Style::new().fg(DIM)),
                 Span::styled(app.curve.to_string(), Style::new().fg(Color::White)),
             ];
-            if let Some((_, t)) = &app.temps.hottest {
+            if let Some((_, t)) = app.temps.hottest() {
                 let pct = app.curve.eval(*t);
                 spans.push(Span::styled(
                     format!("   → {pct:.0}%"),
@@ -379,8 +381,12 @@ fn draw_grid(frame: &mut Frame, geo: &Geometry, gutter_x: u16) {
 fn draw_curve(frame: &mut Frame, geo: &Geometry, app: &App) {
     let area = geo.area;
     let points = app.curve.points();
-    let line_color = if app.curve_active { MANUAL } else { Color::Rgb(170, 170, 190) };
-    let hot = app.temps.hottest.as_ref().map(|(_, t)| *t);
+    let line_color = if app.curve_active {
+        MANUAL
+    } else {
+        Color::Rgb(170, 170, 190)
+    };
+    let hot = app.temps.hottest().map(|(_, t)| *t);
     let ([x0, x1], [y0, y1]) = geo.canvas_bounds();
     let (lo, hi) = (f64::from(geo.lo), f64::from(geo.hi));
     let canvas = Canvas::default()
@@ -389,7 +395,13 @@ fn draw_curve(frame: &mut Frame, geo: &Geometry, app: &App) {
         .y_bounds([y0, y1])
         .paint(|ctx| {
             if let Some(t) = hot.map(f64::from) {
-                ctx.draw(&CanvasLine { x1: t, y1: 0.0, x2: t, y2: 100.0, color: Color::Rgb(0, 110, 130) });
+                ctx.draw(&CanvasLine {
+                    x1: t,
+                    y1: 0.0,
+                    x2: t,
+                    y2: 100.0,
+                    color: Color::Rgb(0, 110, 130),
+                });
             }
             let (Some(first), Some(last)) = (points.first(), points.last()) else {
                 return;
@@ -417,7 +429,7 @@ fn draw_curve(frame: &mut Frame, geo: &Geometry, app: &App) {
 
 fn draw_markers(frame: &mut Frame, geo: &Geometry, app: &App) {
     let buf = frame.buffer_mut();
-    if let Some(t) = app.temps.hottest.as_ref().map(|(_, t)| *t) {
+    if let Some(t) = app.temps.hottest().map(|(_, t)| *t) {
         buf[(geo.col(t), geo.row(app.curve.eval(t)))]
             .set_symbol("◆")
             .set_style(Style::new().fg(ACCENT).bold());
