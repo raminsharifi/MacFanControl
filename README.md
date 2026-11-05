@@ -2,7 +2,7 @@
 
 **A fast, safe, dependency-light terminal UI for controlling your Mac's fans.**
 
-macfan talks directly to the SMC (System Management Controller) through IOKit — no kernel extensions, no background daemons, no Electron. One Rust binary that shows live fan RPM and temperatures, lets you pin fan speeds with a couple of keystrokes, and *guarantees* your fans go back to automatic control when it exits.
+macfan talks directly to the SMC (System Management Controller) through IOKit — no kernel extensions, no background daemons, no Electron. One Rust binary that shows live fan RPM and temperatures, lets you pin fan speeds with a couple of keystrokes, and restores automatic fan control on normal quit, UI errors, and unwinding panics unless you explicitly choose to keep your settings.
 
 Built and tested on an Apple Silicon MacBook Pro (M3 Pro, `Mac15,7`) running macOS 26, including the M3/M4-generation thermal-manager unlock that most older fan tools don't handle.
 
@@ -39,9 +39,10 @@ Built and tested on an Apple Silicon MacBook Pro (M3 Pro, `Mac15,7`) running mac
 - **Linked or independent control** — adjust both fans together (default, matches how MacBook thermals are designed) or each one separately
 - **M3/M4 thermal-manager unlock** — handles the `Ftst` diagnostic unlock that newer Apple Silicon firmware requires before it accepts manual fan control (the same sequence used by [Stats](https://github.com/exelban/stats))
 - **Sleep/wake resilient** — if macOS reclaims fan control (it does, after sleep/wake), macfan detects it within ~2 seconds and re-engages your setting
-- **Safe by construction** — fans are returned to automatic control on quit, on panic, on crash of the UI, on `Ctrl-C` — on every exit path except an explicit "keep my settings" quit
+- **Automatic cleanup** — attempts to restore automatic control on normal quit, UI errors, unwinding panics, and `Ctrl-C`; `Q` explicitly keeps manual settings. Forced termination and hardware write failures can prevent cleanup (see [Safety design](#safety-design))
 - **Read-only mode** — run without `sudo` to just watch fans and temperatures
-- **Zero runtime dependencies** — a single static binary; the only Rust dependency is [ratatui](https://github.com/ratatui/ratatui)
+- **Reusable Rust library** — use fan control, SMC access, curves, and individual temperature readings without the terminal UI by disabling default features
+- **No extra services to install** — one binary using macOS system frameworks; [ratatui](https://github.com/ratatui/ratatui) is the only direct Rust dependency and is optional for library consumers
 
 ## Compatibility
 
@@ -60,9 +61,10 @@ Reading fan state and temperatures never requires privileges. **Writing** fan sp
 
 ### Prebuilt binary (Apple Silicon)
 
-Download `macfan-macos-arm64` from the [latest release](https://github.com/raminsharifi/MacFanControl/releases/latest), then:
+Download `macfan-macos-arm64` and `SHA256SUMS` from the [latest release](https://github.com/raminsharifi/MacFanControl/releases/latest) into the same directory, then:
 
 ```sh
+shasum -a 256 -c SHA256SUMS
 chmod +x macfan-macos-arm64
 xattr -d com.apple.quarantine macfan-macos-arm64   # the binary is not notarized
 sudo ./macfan-macos-arm64
@@ -70,12 +72,12 @@ sudo ./macfan-macos-arm64
 
 ### From source
 
-You need a [Rust toolchain](https://rustup.rs) (1.85+, edition 2024).
+You need a [Rust toolchain](https://rustup.rs) (1.88+, edition 2024).
 
 ```sh
 git clone https://github.com/raminsharifi/MacFanControl.git
 cd MacFanControl
-cargo build --release
+cargo build --locked --release
 sudo ./target/release/macfan
 ```
 
@@ -93,7 +95,7 @@ consumers can omit the terminal dependencies:
 
 ```toml
 [target.'cfg(target_os = "macos")'.dependencies]
-macfan = { git = "https://github.com/raminsharifi/MacFanControl.git", default-features = false }
+macfan = { git = "https://github.com/raminsharifi/MacFanControl.git", tag = "v0.3.0", default-features = false }
 ```
 
 This library requires macOS; cross-platform applications should use the
@@ -101,6 +103,31 @@ macOS-specific dependency section above and gate their macfan calls accordingly.
 Dropping a `control::Controller` restores automatic fan control by default.
 `smc::Smc::write` is a low-level SMC key write operation; writes require root
 and callers are responsible for choosing appropriate keys and values.
+
+For read-only temperature access on macOS:
+
+```rust
+use macfan::{smc::Smc, temps::Temps};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let smc = Smc::open()?;
+    let mut temps = Temps::discover(&smc);
+    temps.refresh(&smc);
+    for (key, celsius) in &temps.temps {
+        println!("{key}: {celsius:.1}°C");
+    }
+    if let Some((key, celsius)) = temps.hottest() {
+        println!("Hottest: {key} at {celsius:.1}°C; average: {:.1}°C", temps.avg());
+    }
+    Ok(())
+}
+```
+
+`Temps::temps` maps SMC keys to the current plausible readings in °C (15–115°C).
+Each refresh excludes failed or invalid readings and retries previously discovered
+sensors. `sensor_count()` counts current readings, `avg()` returns `0.0` when
+empty, and `hottest()` returns `None`. The TUI and `--list` display aggregates;
+individual readings are available through the library.
 
 ## Usage
 
@@ -141,6 +168,7 @@ The curve is saved to `~/.config/macfan/curve` after every edit (under `sudo`, i
 `macfan --list` works without sudo:
 
 ```
+discovering sensors…
 Mac15,7 · Apple M3 Pro
 
   Left Fan         0 RPM  target     0  range 1350–5349  [SYSTEM]
@@ -222,9 +250,10 @@ All SMC writes happen on a dedicated thread so the 3–6 s unlock never freezes 
 
 Manual fan control overrides macOS thermal management, so the failure modes were designed first:
 
-- **Restore on every exit path.** The control thread restores automatic mode from a `Drop` guard — it runs on normal quit, on UI errors, and on panics in either thread. Only an explicit `Q` ("quit keeping settings") skips it.
+- **Restore on supported exit paths.** The control thread attempts to restore automatic mode from a `Drop` guard on normal quit, UI errors, and unwinding panics. An explicit `Q` ("quit keeping settings") skips it. Forced process termination and failed SMC writes can prevent restoration.
 - **`Ftst` is released conservatively.** The unlock flag is cleared only after every fan is back under automatic control, and only if macfan set it in the first place — leaving it stuck at `1` would partially inhibit macOS thermal management.
 - **Intent is tracked eagerly.** The moment a mode write lands on the hardware, the fan is marked dirty — so even if the very next write fails, the exit-restore still covers it. A fan can never be silently stranded in manual mode.
+- **Current temperature readings only.** Failed or implausible samples are excluded rather than reused. If no readings remain, curve evaluation stops with an error; this does not automatically restore fan control, so use `a` or quit with `q` to restore automatic control.
 - **Targets are clamped** to the firmware-reported `F0Mn`–`F0Mx` range, and `F0Mx`/`F0Mn` themselves are never written.
 - **Quit is interruptible.** Pressing `q` mid-unlock aborts the retry loops within ~50 ms instead of queueing behind them.
 - **External state is respected.** macfan only restores fans *it* touched — if another fan tool set something, exit leaves it alone.
@@ -256,20 +285,24 @@ or just reboot — the SMC resets fan control on its own at startup.
 ## Development
 
 ```sh
-cargo build          # debug build
-cargo test           # unit tests (struct layout, fourcc, fpe2/flt codecs, curve parsing/editing, plot geometry)
-cargo clippy         # lint-clean
+cargo build --locked
+cargo test --locked                         # library + CLI/plot tests
+cargo test --locked --no-default-features   # library only, including sensor failure/recovery
+cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked --no-default-features --all-targets -- -D warnings
 ```
 
 | Module | Purpose |
 |--------|---------|
+| `src/lib.rs` | public library modules; TUI internals stay in the binary |
+| `src/main.rs` | CLI arguments, read-only listing, and terminal startup |
 | `src/smc.rs` | IOKit FFI, 80-byte SMC protocol, typed key read/write, key enumeration |
 | `src/fan.rs` | fan discovery, mode read/write, RPM encoding (`flt`/`fpe2`), Intel fallbacks |
 | `src/control.rs` | control thread: unlock sequence, retries, re-assertion, restore guarantees |
 | `src/persist.rs` | saves the edited curve to `~/.config/macfan/curve` (owned by the invoking user under `sudo`) and reloads it on start |
 | `src/plot.rs` | maps curve coordinates to terminal cells for the plot and mouse editing |
 | `src/curve.rs` | piecewise-linear temperature-response fan curve parser and evaluator |
-| `src/temps.rs` | temperature sensor discovery and polling |
+| `src/temps.rs` | sensor discovery, current individual readings, live aggregates, and retries |
 | `src/app.rs` | TUI state, key and mouse handling, curve undo |
 | `src/ui.rs` | ratatui rendering, including the curve plot |
 
@@ -280,6 +313,8 @@ The SMC struct layout is locked by a compile-time size assertion and the byte co
 macfan deliberately overrides macOS thermal management. Pinning fans *below* what the system wants under load means more heat; modern Macs will throttle and ultimately power off before damaging themselves, but sustained high temperatures are still not what you want. Keep an eye on the thermals panel, prefer `q` (restore on quit) over `Q`, and use this software at your own risk — see [LICENSE](LICENSE).
 
 ## Credits
+
+Thanks to [Josh Hansen (@joshhansen)](https://github.com/joshhansen) for the library interface and individual temperature readings in v0.3.0.
 
 macfan stands on prior work that mapped this territory:
 
