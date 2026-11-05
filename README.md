@@ -85,6 +85,23 @@ Optionally install it on your `PATH`:
 sudo cp target/release/macfan /usr/local/bin/
 ```
 
+### Library use (macOS only)
+
+The library exposes `control`, `curve`, `fan`, `smc`, and `temps`. The `tui`
+feature is enabled by default and builds the terminal application. Library-only
+consumers can omit the terminal dependencies:
+
+```toml
+[target.'cfg(target_os = "macos")'.dependencies]
+macfan = { git = "https://github.com/raminsharifi/MacFanControl.git", default-features = false }
+```
+
+This library requires macOS; cross-platform applications should use the
+macOS-specific dependency section above and gate their macfan calls accordingly.
+Dropping a `control::Controller` restores automatic fan control by default.
+`smc::Smc::write` is a low-level SMC key write operation; writes require root
+and callers are responsible for choosing appropriate keys and values.
+
 ## Usage
 
 ```

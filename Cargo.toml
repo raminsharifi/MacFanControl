@@ -4,8 +4,16 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-ratatui = "0.30"
+ratatui = { version = "0.30", optional = true }
 
 [profile.release]
 lto = true
 strip = true
+
+[features]
+default = ["tui"]
+tui = ["dep:ratatui"]
+
+[[bin]]
+name = "macfan"
+required-features = ["tui"]
